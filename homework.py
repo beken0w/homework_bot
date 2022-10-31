@@ -4,6 +4,18 @@ import telegram
 import requests
 import logging
 
+# Здравствуй Павел. Спасибо за рекомендации и советы. Я стараюсь исправлять их
+# по максимуму, но в этот раз при построении логики check_response()
+# столкнулся с проблемой. Если нужно валидировать словарь отдельной ДЗ, то
+# могут быть две ситуации: либо запрос пройдет успешно и структура будет
+# постоянной либо запрос неудачный и вообще ни о какой структуре речи быть не
+# может. Поэтому я пока не смог реализовать проверку таких полей как:
+# response['homeworks'][0]['homework_name'] и
+# response['homeworks'][0]['status']. Сложность состояла в комбинации блоков
+# try/except и if/else. Так еще и тесты очень сильно ограничивают.
+# Есть как огромное желание довести данный проект до ума, так и выделить на это
+# всё свободное время, т.е 24/7.
+
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -66,11 +78,19 @@ def get_api_answer(current_timestamp):
 
 def check_response(response):
     """Проверка запроса."""
-    result_resp = response['homeworks']
-    if not isinstance(result_resp, list):
-        logger.error('При проверке запроса возникла ошибка.')
-        raise Exception
-    return result_resp
+    check_set = {'homeworks', 'current_date'}
+    res_resp = response['homeworks']
+    if set(response.keys()).issubset(check_set):
+        if not isinstance(res_resp, list):
+            logger.error('Формат коллекции ДЗ не является списком')
+            raise Exception('Формат коллекции ДЗ не является списком')
+        else:
+            logger.info('Запрос соответствует требованиям,'
+                        ' передаю дальше')
+            return res_resp
+    else:
+        logger.error('Формат запроса не соответствует требованиям')
+        raise Exception('Формат запроса не соответствует требованиям')
 
 
 def parse_status(homework):
@@ -80,20 +100,17 @@ def parse_status(homework):
     try:
         verdict = HOMEWORK_STATUSES[homework_status]
         logger.debug('Статус домашней работы успешно получен.')
-    except Exception as error:
-        logger.error(f'Список пуст, проверьте дату. Ошибка: {error}')
-
-    return f'Изменился статус проверки работы "{homework_name}". {verdict}'
+        return f'Изменился статус проверки работы "{homework_name}". {verdict}'
+    except Exception:
+        logger.debug('Список домашних работ пуст.')
+        raise Exception
 
 
 def check_tokens():
     """Проверяет доступность постоянных окружения."""
     result = [PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID]
-    if all(result):
-        logger.info('Все постоянные окружения на месте.')
-    else:
-        logger.critical('Критическая ошибка. Не хватает постоянных окружения')
-    return all(result)
+    return all(result) or logger.critical(
+        'Критическая ошибка. Не хватает постоянных окружения')
 
 
 def main():
@@ -101,24 +118,28 @@ def main():
     checkpoint = ''
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
     current_timestamp = int(time.time())
+    if not check_tokens:
+        logger.critical('Не хватает постоянных окружения')
+        raise Exception
     while True:
         try:
             response = get_api_answer(current_timestamp)
             homework_list = check_response(response)
-            if len(homework_list) != 0:
+            if homework_list:
                 result = parse_status(homework_list[0])
                 send_message(bot, result)
             else:
-                logger.info('Список пуст. Ждем дальше')
-            current_timestamp = response['current_date']
-            time.sleep(RETRY_TIME)
+                logger.info('Список пуст. Ждем еще 10 минут.')
+            current_timestamp = int(time.time())
 
         except Exception as error:
             message = f'Сбой в работе программы: {error}'
             logger.error(message)
             if checkpoint != message:
                 send_message(bot, message)
-            checkpoint = message
+            else:
+                checkpoint = message
+        finally:
             time.sleep(RETRY_TIME)
 
 
