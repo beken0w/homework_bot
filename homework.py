@@ -3,18 +3,8 @@ import time
 import telegram
 import requests
 import logging
+from pydantic_classes import ResponseModel
 
-# Здравствуй Павел. Спасибо за рекомендации и советы. Я стараюсь исправлять их
-# по максимуму, но в этот раз при построении логики check_response()
-# столкнулся с проблемой. Если нужно валидировать словарь отдельной ДЗ, то
-# могут быть две ситуации: либо запрос пройдет успешно и структура будет
-# постоянной либо запрос неудачный и вообще ни о какой структуре речи быть не
-# может. Поэтому я пока не смог реализовать проверку таких полей как:
-# response['homeworks'][0]['homework_name'] и
-# response['homeworks'][0]['status']. Сложность состояла в комбинации блоков
-# try/except и if/else. Так еще и тесты очень сильно ограничивают.
-# Есть как огромное желание довести данный проект до ума, так и выделить на это
-# всё свободное время, т.е 24/7.
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -63,10 +53,12 @@ def get_api_answer(current_timestamp):
     timestamp = current_timestamp or int(time.time())
     params = {'from_date': timestamp}
     try:
+        logger.info('Выполняю запрос к Яндексу')
         response = requests.get(ENDPOINT, headers=HEADERS, params=params)
         if response.status_code != 200:
             logger.error('Эндпоинт недоступен.')
             raise Exception('Эндпоинт недоступен.')
+        logger.info('Запрос успешно проведен.')
         return response.json()
     except Exception as error:
         logger.exception(
@@ -78,19 +70,16 @@ def get_api_answer(current_timestamp):
 
 def check_response(response):
     """Проверка запроса."""
-    check_set = {'homeworks', 'current_date'}
-    res_resp = response['homeworks']
-    if set(response.keys()).issubset(check_set):
-        if not isinstance(res_resp, list):
-            logger.error('Формат коллекции ДЗ не является списком')
-            raise Exception('Формат коллекции ДЗ не является списком')
-        else:
-            logger.info('Запрос соответствует требованиям,'
-                        ' передаю дальше')
-            return res_resp
-    else:
-        logger.error('Формат запроса не соответствует требованиям')
-        raise Exception('Формат запроса не соответствует требованиям')
+    if isinstance(response['homeworks'], list):
+        try:
+            logger.info('Начинается валидация запроса...')
+            resp = ResponseModel(**response)
+            logger.info('Валидация запроса успешно пройдена')
+            return response['homeworks']
+        except Exception as error:
+            logger.error('Формат запроса не соответствует требованиям.'
+                         f'Ошибка {error}')
+            raise Exception
 
 
 def parse_status(homework):
@@ -99,10 +88,10 @@ def parse_status(homework):
     homework_status = homework['status']
     try:
         verdict = HOMEWORK_STATUSES[homework_status]
-        logger.debug('Статус домашней работы успешно получен.')
+        logger.info('Статус домашней работы успешно получен.')
         return f'Изменился статус проверки работы "{homework_name}". {verdict}'
     except Exception:
-        logger.debug('Список домашних работ пуст.')
+        logger.error('Попытка получить значение по несуществующему ключу.')
         raise Exception
 
 
@@ -118,7 +107,7 @@ def main():
     checkpoint = ''
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
     current_timestamp = int(time.time())
-    if not check_tokens:
+    if not check_tokens():
         logger.critical('Не хватает постоянных окружения')
         raise Exception
     while True:
@@ -137,7 +126,6 @@ def main():
             logger.error(message)
             if checkpoint != message:
                 send_message(bot, message)
-            else:
                 checkpoint = message
         finally:
             time.sleep(RETRY_TIME)
