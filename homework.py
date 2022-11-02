@@ -73,7 +73,7 @@ def check_response(response):
     if isinstance(response['homeworks'], list):
         try:
             logger.info('Начинается валидация запроса...')
-            resp = ResponseModel(**response)
+            ResponseModel(**response)
             logger.info('Валидация запроса успешно пройдена')
             return response['homeworks']
         except Exception as error:
